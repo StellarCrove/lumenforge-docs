@@ -1,9 +1,9 @@
 # Integration Guide
 
 A task-oriented walkthrough of integrating with LumenForge via
-`@lumenforge/sdk`. For the full API, see the
-[SDK README](https://github.com/StellarCrove/lumenforge-sdk#readme); this
-guide is the order you'd actually do things in.
+`@lumenforge/sdk`. For every function's exact parameters, return type,
+and errors, see [api-reference.md](api-reference.md); this guide is the
+order you'd actually do things in.
 
 ## 1. Install
 

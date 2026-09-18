@@ -24,6 +24,9 @@ relate, how to integrate end to end, and the tradeoffs that span both.
   task-oriented walkthrough: deploy a vault, deposit, withdraw, page
   through an owner's vaults, handle errors, track events, keep
   contracts alive, or do all of it from the CLI instead.
+- [`docs/api-reference.md`](docs/api-reference.md) — every SDK
+  function's parameters, return type, defaults, and errors, in tables —
+  the reference to come back to once you know what you're looking for.
 - [`docs/design-tradeoffs.md`](docs/design-tradeoffs.md) — the
   intentional limitations that show up across both repos, summarized in
   one place instead of scattered across ADRs.
