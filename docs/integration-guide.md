@@ -149,6 +149,16 @@ Returns `undefined` (never throws) for anything that isn't a recognized
 own `transfer` event, which shows up alongside `deposit`/`withdraw`/
 `rescue` as a side effect of moving the underlying token.
 
+Decoding a whole batch at once and dropping anything unrecognized —
+what most callers actually want, instead of filtering `undefined`s
+themselves — is `decodeVaultEvents`/`decodeFactoryEvents`:
+
+```ts
+import { decodeVaultEvents } from "@lumenforge/sdk";
+
+const deposits = decodeVaultEvents(events).filter((e) => e.type === "deposit");
+```
+
 ## 7. Keep it alive
 
 Neither contract can renew its own storage TTL on-chain — that has to be
@@ -163,9 +173,39 @@ import { keepAlive } from "@lumenforge/sdk";
 await keepAlive([vault, factory]);
 ```
 
+Don't have the vault addresses handy — just a factory and an owner?
+`keepOwnerVaultsAlive` discovers them first:
+
+```ts
+import { keepOwnerVaultsAlive } from "@lumenforge/sdk";
+
+await keepOwnerVaultsAlive(factory, "G...", (address) =>
+  connectVault({ contractId: address, /* same rpcUrl/networkPassphrase/... */ }),
+);
+```
+
 See the SDK README's [Keeping contracts alive](https://github.com/StellarCrove/lumenforge-sdk#keeping-contracts-alive-ttl)
 section for `extendTtl`/`extendVaultsByOwnerTtl` if you need finer
-control than the batch helper.
+control than the batch helpers.
+
+## 8. Or skip the code: the CLI
+
+Every operation above is also a `lumenforge` command — for a cron job
+or a one-off check where writing a script is overkill:
+
+```bash
+export LUMENFORGE_RPC_URL="https://soroban-testnet.stellar.org"
+export LUMENFORGE_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+
+lumenforge vault snapshot --contract C... --public-key G...
+lumenforge factory keep-owner-vaults-alive --contract C... --owner G...
+```
+
+State-changing commands need `LUMENFORGE_SECRET_KEY` set (an env var
+only — never a `--flag`, which would be visible to `ps` and land in
+shell history). See the SDK README's
+[CLI section](https://github.com/StellarCrove/lumenforge-sdk#cli) for
+the full command list.
 
 ## Before you point a vault at a token
 
