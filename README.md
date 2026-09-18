@@ -9,7 +9,8 @@ LumenForge is two repos:
 - [`lumenforge-contracts`](https://github.com/StellarCrove/lumenforge-contracts)
   — the Soroban contracts (`lumen_vault`, `lumen_vault_factory`).
 - [`lumenforge-sdk`](https://github.com/StellarCrove/lumenforge-sdk) —
-  the TypeScript client for them.
+  the TypeScript client for them (also ships a `lumenforge` CLI for
+  scripting the same operations without writing TypeScript).
 
 Each repo documents itself in detail (architecture, security model, ADRs,
 API usage). This repo is the layer above that: how the contracts and SDK
@@ -21,7 +22,8 @@ relate, how to integrate end to end, and the tradeoffs that span both.
   factory, and the SDK relate, in one picture.
 - [`docs/integration-guide.md`](docs/integration-guide.md) — a
   task-oriented walkthrough: deploy a vault, deposit, withdraw, page
-  through an owner's vaults, handle errors.
+  through an owner's vaults, handle errors, track events, keep
+  contracts alive, or do all of it from the CLI instead.
 - [`docs/design-tradeoffs.md`](docs/design-tradeoffs.md) — the
   intentional limitations that show up across both repos, summarized in
   one place instead of scattered across ADRs.
