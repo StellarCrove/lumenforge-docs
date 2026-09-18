@@ -21,9 +21,11 @@ TypeScript client for talking to both.
               │        @lumenforge/sdk (TS)           │
               │  connectVault / connectFactory        │
               │  deployVault / deployVaultViaFactory  │
-              │  collectVaultsByOwner / iterate...    │
+              │  pagination, snapshots, events,       │
+              │  TTL keeper                           │
               └─────────────────────────────────────┘
                   talks to both contracts over RPC
+                  also ships as a `lumenforge` CLI
 ```
 
 ## `LumenVault`
@@ -73,5 +75,15 @@ rather than surfacing as a runtime error for an integrator.
 The SDK is deliberately thin: it doesn't add business logic the
 contracts don't have (e.g. it won't invent per-depositor accounting on
 top of a pooled `Balance`). What it adds is ergonomics around things
-Soroban itself makes awkward — salt management, pagination loops, and
-decoding contract error codes into readable messages.
+Soroban itself makes awkward — salt management, pagination loops,
+decoding contract error codes into readable messages, decoding raw
+contract *events* into typed objects, batching a vault's/factory's
+whole state into one read, and an off-chain keeper for the TTL renewal
+neither contract can trigger itself. See the [integration
+guide](integration-guide.md) for all of these in the order you'd
+actually reach for them.
+
+It also ships a `lumenforge` CLI for scripting the same operations
+without writing TypeScript — a cron job that keeps vaults alive, a
+quick balance check. See the SDK README's
+[CLI section](https://github.com/StellarCrove/lumenforge-sdk#cli).
