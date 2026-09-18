@@ -553,7 +553,7 @@ call-site simplifications. The one exception worth flagging: if your
 hand-rolled pagination loop assumed a fixed page size without ever
 checking `vaults_by_owner_count`, migrating to `collectVaultsByOwner`
 means you get the count-driven termination path "for free" (see
-[api-reference.md](api-reference.md#pagination-itervaultsbyowner--collectvaultsbyowner))
+[api-reference.md](api-reference.md#pagination-iteratevaultsbyowner-collectvaultsbyowner))
 — strictly more robust, never less.
 
 ## Framework-specific notes
@@ -595,7 +595,7 @@ intended use case for that pattern, not a workaround.
 Nothing about this SDK is incompatible with a serverless environment
 (no persistent local state is required between invocations — every
 `connectVault`/`connectFactory` call fetches the contract spec fresh
-each time, as noted in [api-reference.md](api-reference.md#does-the-cli-cache-anything-between-runs-contract-specs-connection-state)
+each time, as noted in [api-reference.md](cli-reference.md#frequently-asked-questions)
 for the CLI, and the same is true of the library used directly). The
 one practical consideration is cold-start latency: each invocation
 pays the cost of fetching the contract spec again, since there's no

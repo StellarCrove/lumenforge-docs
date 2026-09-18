@@ -739,7 +739,7 @@ lumenforge factory list-vaults --contract <C...> --owner <G...> [--with-snapshot
 |---|---|---|---|
 | `--contract` | yes | `C...` address | The factory to query. |
 | `--owner` | yes | `G...` address | Whose vaults to list. |
-| `--with-snapshots` | no | boolean (presence-only) | If given, resolves each address into its full `getVaultSnapshot`. Costs one extra RPC round trip per vault, sequentially — not parallelized (see [api-reference.md](api-reference.md#itervaultsnapshotsbyowner--collectvaultsnapshotsbyowner) for why). |
+| `--with-snapshots` | no | boolean (presence-only) | If given, resolves each address into its full `getVaultSnapshot`. Costs one extra RPC round trip per vault, sequentially — not parallelized (see [api-reference.md](api-reference.md#iteratevaultsnapshotsbyowner-collectvaultsnapshotsbyowner) for why). |
 | `--public-key` | no | `G...` address | Falls back to `LUMENFORGE_SECRET_KEY`-derived, same as the other read-only commands. |
 
 Without `--with-snapshots`, this command paginates internally via
@@ -955,7 +955,7 @@ side effect of `deposit`/`withdraw`/`rescue` internally calling the
 token contract, are **not** included here — `decodeVaultEvents`
 silently drops anything that isn't a recognized `lumen_vault` event,
 exactly as documented in
-[api-reference.md](api-reference.md#decodevaulteventsevents--decodefactoryeventsevents).
+[api-reference.md](api-reference.md#decodevaulteventsevents-decodefactoryeventsevents).
 If you need the raw token transfer events too, you'll need to call
 `server.getEvents` yourself via the library and skip the decoding step
 for those entries.
