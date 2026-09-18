@@ -89,6 +89,30 @@ for await (const v of iterateVaultsByOwner(factory, "G...", { pageSize: 50 })) {
 }
 ```
 
+That gives you addresses. For a dashboard showing balances, use
+`collectVaultSnapshotsByOwner` instead — it resolves each address into
+its full state (see step 4a) without you writing the connect-then-read
+loop yourself:
+
+```ts
+import { collectVaultSnapshotsByOwner } from "@lumenforge/sdk";
+
+const vaults = await collectVaultSnapshotsByOwner(factory, "G...", (address) =>
+  connectVault({ contractId: address, /* same rpcUrl/networkPassphrase/... */ }),
+);
+```
+
+## 4a. Read a single vault's full state at once
+
+`balance()`, `owner()`, `token()`, etc. are each their own round trip.
+`getVaultSnapshot`/`getFactorySnapshot` batch them:
+
+```ts
+import { getVaultSnapshot } from "@lumenforge/sdk";
+
+const { balance, owner, paused, minDeposit, maxBalance } = await getVaultSnapshot(vault);
+```
+
 ## 5. Handle errors
 
 `connectVault`/`connectFactory`/`deployVault` wire up readable error
@@ -97,7 +121,35 @@ messages automatically — a failed call throws something like
 a raw host trap. Catch and branch on the message, or on the underlying
 error code if you need to localize it.
 
-## 6. Keep it alive
+## 6. Track activity (events)
+
+A call's return value tells you the *result*; it doesn't tell you what
+happened on-chain if you're building an indexer or activity feed off
+`getEvents` instead of watching your own calls. Decode raw events with
+`decodeVaultEvent`/`decodeFactoryEvent`:
+
+```ts
+import { decodeVaultEvent } from "@lumenforge/sdk";
+
+const { events } = await server.getEvents({
+  filters: [{ type: "contract", contractIds: [vaultContractId] }],
+  startLedger,
+});
+
+for (const raw of events) {
+  const decoded = decodeVaultEvent(raw);
+  if (decoded?.type === "deposit") {
+    // decoded.from, decoded.amount, decoded.new_balance
+  }
+}
+```
+
+Returns `undefined` (never throws) for anything that isn't a recognized
+`lumen_vault`/`lumen_vault_factory` event — including the SEP-41 token's
+own `transfer` event, which shows up alongside `deposit`/`withdraw`/
+`rescue` as a side effect of moving the underlying token.
+
+## 7. Keep it alive
 
 Neither contract can renew its own storage TTL on-chain — that has to be
 called periodically from off-chain, or the network archives the storage.
