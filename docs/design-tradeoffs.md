@@ -60,5 +60,5 @@ Both contracts expose `extend_ttl` (and the factory additionally
 these on a schedule automatically — Soroban contracts can't wake
 themselves up. That's why the SDK ships `keepAlive` as an off-chain
 keeper you're expected to run periodically (see the
-[integration guide](integration-guide.md#6-keep-it-alive)) rather than
+[integration guide](integration-guide.md#7-keep-it-alive)) rather than
 the contract trying to solve scheduling itself.
