@@ -27,6 +27,13 @@ relate, how to integrate end to end, and the tradeoffs that span both.
 - [`docs/api-reference.md`](docs/api-reference.md) — every SDK
   function's parameters, return type, defaults, and errors, in tables —
   the reference to come back to once you know what you're looking for.
+- [`docs/cli-reference.md`](docs/cli-reference.md) — the exhaustive
+  `lumenforge` CLI reference: every flag, environment variable, exit
+  code, error message, and automation recipe (cron, systemd, GitHub
+  Actions, Docker, launchd).
+- [`docs/data-model.md`](docs/data-model.md) — exactly what each
+  contract stores, in which storage class, and why that governs which
+  `extend_ttl`-family call keeps it alive.
 - [`docs/design-tradeoffs.md`](docs/design-tradeoffs.md) — the
   intentional limitations that show up across both repos, summarized in
   one place instead of scattered across ADRs.
