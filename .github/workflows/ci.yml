@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate-docs:
+    name: Validate Documentation & Relative Links
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check Document Integrity & Relative Links
+        run: |
+          node -e '
+          const fs = require("fs");
+          const path = require("path");
+
+          function getFiles(dir) {
+            let files = [];
+            for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+              const fullPath = path.join(dir, item.name);
+              if (item.isDirectory()) {
+                if (item.name !== ".git" && item.name !== "node_modules") {
+                  files.push(...getFiles(fullPath));
+                }
+              } else if (item.name.endsWith(".md")) {
+                files.push(fullPath);
+              }
+            }
+            return files;
+          }
+
+          const mdFiles = getFiles(".");
+          let hasErrors = false;
+          console.log(`Scanning ${mdFiles.length} markdown files for broken relative links...`);
+
+          const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+
+          for (const file of mdFiles) {
+            const content = fs.readFileSync(file, "utf8");
+            let match;
+            while ((match = linkRegex.exec(content)) !== null) {
+              const url = match[2].trim();
+              if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("mailto:") || url.startsWith("#")) {
+                continue; // Skip external protocols and in-page anchor jumps
+              }
+              const cleanPath = url.split("#")[0].split("?")[0];
+              if (!cleanPath) continue;
+              const resolved = path.resolve(path.dirname(file), cleanPath);
+              if (!fs.existsSync(resolved)) {
+                console.error(`❌ Broken link in ${file}: "${url}" -> Target not found: ${resolved}`);
+                hasErrors = true;
+              }
+            }
+          }
+
+          if (hasErrors) {
+            console.error("Documentation link validation failed!");
+            process.exit(1);
+          } else {
+            console.log("✅ All relative documentation links verified successfully.");
+          }
+          '
