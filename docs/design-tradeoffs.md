@@ -27,6 +27,7 @@ than leaving it abstract.
 - [No cross-vault atomicity](#no-cross-vault-atomicity)
 - [`MAX_VAULTS_PER_OWNER` is a compile-time constant, not configurable per factory](#max_vaults_per_owner-is-a-compile-time-constant-not-configurable-per-factory)
 - [No on-chain access control list beyond a single owner](#no-on-chain-access-control-list-beyond-a-single-owner)
+- [Comparative analysis: LumenForge vaults vs. classic Stellar multi-sig custody](#comparative-analysis-lumenforge-vaults-vs-classic-stellar-multi-sig-custody)
 - [How to tell "deliberate tradeoff" from "actual bug"](#how-to-tell-deliberate-tradeoff-from-actual-bug)
 
 ## No per-depositor accounting
@@ -439,6 +440,132 @@ owner-gated call. This is exactly the same pattern referenced in
 above for compromised-key recovery — the contract stays deliberately
 ignorant of what's "behind" its owner address, and that's the
 intended extension point for exactly this kind of requirement.
+
+## Comparative analysis: LumenForge vaults vs. classic Stellar multi-sig custody
+
+When architecting institutional custody, treasury management, or programmatic escrow on Stellar, teams routinely evaluate two primary models:
+1. **Classic Account-Level Multi-Sig**: A native Stellar account with multiple weighted signer keys (`G...`) and operation thresholds (low, medium, high) enforced at the transaction envelope level by Stellar Core.
+2. **LumenForge Soroban Vaults**: Dedicated smart contracts (`lumen_vault` at `C...`) deployed via `lumen_vault_factory`, encapsulating pooled balances, programmable invariants, two-step ownership management, and autonomous operations.
+3. **Hybrid Architecture**: A classic Stellar multi-sig account configured as the stored `owner` `Address` of one or more `lumen_vault` instances.
+
+### Comparison matrix
+
+| Capability / Dimension | Classic Stellar Account Multi-Sig | LumenForge Soroban Vault (`lumen_vault`) | Hybrid Architecture (Multi-Sig as Vault Owner) |
+|---|---|---|---|
+| **Underlying Primitive** | Account entry in Stellar ledger (`G...`) | Smart contract instance on Soroban VM (`C...`) | Soroban contract (`C...`) governed by Multi-Sig Account (`G...`) |
+| **Setup & Capital Lockup** | **0.5 XLM** base reserve + **0.5 XLM** per additional signer key and trustline. | **Zero base reserve** in XLM; incurs WASM contract deployment fee and initial ledger rent. | Base reserve for signers on owning account + contract storage rent for vault. |
+| **Operational & Maintenance Cost** | Flat network fee per operation (typically ~100 stroops); zero ongoing storage rental. | Soroban CPU, memory, read/write ledger fees + periodic TTL maintenance (`extend_ttl`). | Regular Soroban invocation fees; routine keeper tasks run without multi-sig transaction overhead. |
+| **Custody & Token Scope** | Multi-asset: holds XLM and multiple classic trustlines in a single account. | **Single-asset**: exactly one SEP-41 token per vault instance; strict isolation. | Isolated per-vault token exposure with unified multi-sig organizational governance. |
+| **SEP-41 Token Interoperability** | Requires SAC (Stellar Asset Contract) wrapping / interop operations to interact with Soroban. | **Native SEP-41 compatibility**: directly invokes `transfer`, `transfer_from`, and `balance`. | Native SEP-41 composability with cross-contract authorization. |
+| **Recovery & Key Rotation** | Requires multi-sig quorum to issue `set_options` transaction updating signers/weights. | **Two-step ownership transfer** (`transfer_ownership` -> `accept_ownership`) prevents loss to dead addresses. | Dual-layer: signers can be rotated at the account layer, or vault transferred to a new multi-sig account. |
+| **Emergency Controls & Blast Radius** | No pause mechanism; compromised key with threshold weight can drain all trustline assets immediately. | Instant single-owner `pause` halts new deposits; `pause` deliberately does not block owner withdrawals. | Signer can trigger immediate pause to halt deposits while multi-sig convenes to rotate keys. |
+| **Automation & Keeper Tasks** | Every operation requires threshold signatures; autonomous unprivileged actions impossible. | **Unprivileged keeper functions**: anyone can call `extend_ttl` to prevent archival without custody keys. | Unprivileged keepers maintain contract health without exposure to treasury signer keys. |
+| **Audit Surface & Security Footprint** | Native protocol code; battle-tested Stellar Core consensus level. Zero smart contract risk. | Minimal, audited WASM surface (~single balance, strict panic paths, ADR-validated invariants). | High security: protocol-level multi-key authorization combined with contract-level isolation. |
+
+### Architectural trade-off analysis
+
+#### 1. Authorization granularity vs. execution complexity
+Classic Stellar multi-sig enforces authorization thresholds (`low: 1`, `medium: 2`, `high: 3`) across standard operation categories (e.g., payment vs account options). However, it is fundamentally static: it cannot inspect payment destinations, enforce minimum deposit constraints, or restrict withdrawal volumes dynamically. 
+
+`lumen_vault` executes programmatic logic in WebAssembly. It verifies that deposits satisfy `min_deposit`, maintains invariant checking against deposit reentrancy, rejects accidental transfers of non-custodied tokens while providing a dedicated `rescue` path, and enforces that emergency withdrawals can proceed even when deposits are paused. The trade-off is execution complexity: invoking a Soroban contract incurs CPU, memory, and footprint metering rather than classic flat operation fees.
+
+#### 2. Storage economics: Reserves vs. TTL state rental
+- **Classic accounts** utilize persistent ledger space governed by XLM reserves. Once an account is funded with reserves for its signers and trustlines, its state remains on-chain indefinitely without maintenance.
+- **Soroban contracts** utilize state rental economics. Contracts and their storage instances have a finite Time-To-Live (TTL) measured in ledgers. If TTL expires without renewal, contract data enters archival storage. LumenForge mitigates this through deterministic storage classes (instance storage for configuration, persistent storage for factory owner indexing) and exposes unprivileged `extend_ttl` methods that automated monitoring keepers can trigger without possessing administrative keys (see [data-model.md](data-model.md) and [cli-reference.md](cli-reference.md)).
+
+#### 3. Key compromise and recovery blast radius
+In a pure classic multi-sig setup, an attacker obtaining threshold keys can execute `payment` operations across all asset trustlines simultaneously. 
+
+With LumenForge vaults:
+- Each asset is segregated into an independent vault contract.
+- If a security incident occurs, the `pause` method can immediately freeze incoming deposits, isolating third-party exposure.
+- Ownership migration utilizes a formal two-phase handshake: `transfer_ownership(new_owner)` records a pending owner, but does not relinquish control until `accept_ownership()` is successfully invoked from `new_owner`. This guarantees that custody cannot be orphaned by a typographical error in the recipient address.
+
+### Hybrid architectures: Multi-sig governing Soroban vaults
+
+For production deployments managing substantial capital, the recommended architectural pattern is a **Hybrid Custody Model**, where a classic Stellar multi-sig account serves as the `owner` of a `lumen_vault`.
+
+```
+                    +------------------------------------------+
+                    |        Stellar Multi-Sig Account         |
+                    |           (Address: GABC...XYZ)          |
+                    |   Signers: Key1 (1), Key2 (1), Key3 (1)  |
+                    |            Threshold: High = 2           |
+                    +--------------------+---------------------+
+                                         |
+                       Owns via Address require_auth()
+                                         |
+                                         v
+               +------------------------------------------------+
+               |            LumenForge Soroban Vault            |
+               |             (Contract: CDEF...789)             |
+               |                                                |
+               |  - Asset: USDC (SEP-41)                        |
+               |  - Programmable Invariants: min_deposit        |
+               |  - Emergency Pause & Stray Asset Rescue        |
+               |  - Unprivileged extend_ttl (Autonomous Keepers)|
+               +------------------------------------------------+
+```
+
+#### Key architectural advantages of hybrid custody
+1. **Decoupled Keeper Automation**: Background daemons and monitoring bots can keep the vault alive indefinitely via `lumenforge keep-alive` without possessing signing credentials for the treasury multi-sig account.
+2. **M-of-N Governance for High-Risk Calls**: Any state change affecting funds (`withdraw`, `set_min_deposit`, `rescue`, `transfer_ownership`) requires a valid transaction envelope signed by the multi-sig quorum (e.g., 2-of-3 corporate keys).
+3. **Defense in Depth**: If one signer key is compromised, the attacker cannot withdraw funds single-handedly. Meanwhile, legitimate operations can be paused immediately if low-threshold emergency signing is configured on the multi-sig account.
+
+#### Implementation walkthrough: Configuring a multi-sig vault owner
+1. **Establish the Multi-Sig Account**:
+   Create a native Stellar account and attach multiple signer public keys with desired threshold weights via `SetOptions`:
+   ```bash
+   # Add Signer B with weight 1 and set medium/high thresholds to 2 (2-of-2 or 2-of-3)
+   stellar tx new set-options --signer "G_SIGNER_B:1" --med-threshold 2 --high-threshold 2 --source "G_MULTISIG_ACCOUNT"
+   ```
+2. **Deploy the Vault with Multi-Sig Owner**:
+   When invoking `deployVault` or `deployVaultViaFactory`, pass the multi-sig account `Address` (`G_MULTISIG_ACCOUNT`) as the `owner` parameter:
+   ```typescript
+   import { deployVaultViaFactory } from "@stellarcrove/lumenforge-sdk";
+
+   const { vaultAddress } = await deployVaultViaFactory({
+     factoryAddress: "C_FACTORY_ADDRESS",
+     token: "C_USDC_TOKEN_ADDRESS",
+     owner: "G_MULTISIG_ACCOUNT", // Account with multi-sig thresholds
+     minDeposit: 1_000_000n,
+     signer: deployerKeypair,
+   });
+   ```
+3. **Executing Owner Actions via Multi-Sig Envelopes**:
+   When calling owner methods (e.g., `withdraw`), the generated transaction envelope must collect signatures from enough signer keys to meet the multi-sig account's threshold before submission to Soroban RPC.
+
+### Custody decision guide
+
+Use the following framework to determine the optimal custody architecture for your integration:
+
+```
+[Start Custody Architecture Decision]
+         |
+         v
+Does your workload require dynamic contract logic (min deposit enforcement,
+programmable pause, rescue, or direct SEP-41 contract-to-contract composability)?
+         |
+         +---> NO ---> Are you custodying classic Stellar assets with static corporate signers?
+         |                  |
+         |                  +---> YES ---> Use [Classic Stellar Account Multi-Sig]
+         |                  |
+         |                  +---> NO  ---> Re-evaluate integration requirements.
+         |
+         +---> YES ---> Do you require institutional governance / multiple hardware signers
+                        to approve all fund withdrawals and administrative updates?
+                            |
+                            +---> NO  ---> Use [Standalone LumenForge Vault]
+                            |              (Single-key / Hot Wallet programmatic owner)
+                            |
+                            +---> YES ---> Use [Hybrid Architecture]
+                                           (Multi-Sig Account owning LumenForge Vault)
+```
+
+#### Summary recommendations:
+- **Choose Classic Multi-Sig Account** when: You only custody native XLM and classic issued assets, have no smart contract interactions, and prioritize zero storage maintenance and zero smart contract audit dependencies.
+- **Choose Standalone LumenForge Vault** when: You are building an automated dApp, algorithmic liquidity pool, or escrow service where an automated backend or hot wallet owns the vault and programmatically processes deposits/withdrawals with custom bounds.
+- **Choose Hybrid Architecture** when: You manage institutional treasuries, protocol reserves, or customer deposits in SEP-41 tokens requiring both M-of-N human signing governance and the programmable safety guardrails (deposit floors, pause controls, stray asset rescue) provided by LumenForge.
 
 ## How to tell "deliberate tradeoff" from "actual bug"
 
