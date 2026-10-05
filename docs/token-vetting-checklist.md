@@ -50,27 +50,24 @@ throughout [design-tradeoffs.md](design-tradeoffs.md).
 ## Fee-on-transfer tokens
 
 **The risk**: if `token` deducts a fee so the vault receives less than
-the `amount` passed to `transfer`, the vault's internal `Balance` —
-which is incremented by the full `amount` on `deposit` — will
-over-state what the vault actually holds. Eventually a legitimate
-`withdraw` could fail because the real token balance ran out before
-`Balance` said it would.
+the `amount` passed to `transfer`, a vault that credited the full
+`amount` would over-state what it holds. `lumen_vault` 0.5.0 closes
+that hole: `deposit` and `batch_deposit` read the vault's token
+balance before and after `transfer`, and return `InvalidAmount` (the
+transfer reverts with the error) unless the credit is exactly
+`amount`. A fee-on-transfer token therefore cannot be deposited. The
+check does not catch a rebase that moves balances later, outside
+`transfer`.
 
-**Worked example of the failure**: suppose `token` deducts a flat 1%
-fee on every transfer. A depositor calls `deposit({ from, amount: 1000n })`.
-`lumen_vault`'s `Balance` becomes `1000`. But the actual SEP-41
-`transfer` call only delivered `990` tokens to the vault's address (1%
-— 10 tokens — went wherever the fee logic sends it). The vault now
-*believes* it holds 1000, but *actually* holds 990. If the owner later
-calls `withdraw({ amount: 1000n })`, the contract's own bookkeeping
-says that's fine (`amount <= Balance`), and it will attempt to
-transfer 1000 tokens out — but the vault's real balance is only 990,
-so the underlying token-level transfer fails. Worse: if multiple
-depositors have added funds, an earlier withdrawal by one party can
-succeed while draining real balance faster than `Balance` accounts
-for, leaving a *later* depositor's nominally-available balance
-actually unbacked by real tokens — a shortfall that surfaces
-unpredictably, not necessarily on the transaction that caused it.
+**Worked example**: suppose `token` deducts a flat 1% fee on every
+transfer. A depositor calls `deposit({ from, amount: 1000n })`. The
+token would credit the vault with `990`. The contract compares the
+vault's token balance before and after that transfer, sees `990`
+instead of `1000`, and returns `InvalidAmount`. The transfer reverts
+with the error, `Balance` stays where it was, and the depositor's
+tokens are still in their own account. The deposit does not land.
+That is why a fee-on-transfer token is a red flag: the vault will
+refuse it, not silently hold a short balance.
 
 **Check**: deposit a small test amount and compare the vault's real
 token balance (query the token contract directly) against what
@@ -420,7 +417,7 @@ replace it.
 
 | Finding | Classification | Recommendation |
 |---|---|---|
-| Fee-on-transfer detected | Red flag | Do not use with `LumenVault` as-is; the accounting will eventually desync. |
+| Fee-on-transfer detected | Red flag | Do not use with `LumenVault`. `deposit` returns `InvalidAmount` and reverts, so the vault will not hold the token. |
 | Balance drift detected during the test window | Red flag | Do not use; the token rebases or otherwise mutates balances outside `transfer`. |
 | Clawback enabled, actively used by the issuer historically | Red flag | Avoid, or only use with depositors who explicitly understand and accept this risk. |
 | Pausable-by-issuer, issuer has a documented, narrow, disclosed policy for when it would be exercised | Yellow flag | Usable, but document the dependency explicitly for depositors. |
