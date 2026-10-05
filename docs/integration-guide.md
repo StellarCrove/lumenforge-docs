@@ -23,6 +23,7 @@ order you'd actually do things in.
 - [Framework-specific notes](#framework-specific-notes)
 - [Troubleshooting](#troubleshooting)
 - [Before you point a vault at a token](#before-you-point-a-vault-at-a-token)
+- [Deploy on testnet](testnet-deploy.md)
 
 ## Prerequisites
 
@@ -662,5 +663,7 @@ this failure mode and how to check for it before it happens.
 
 Read [token-vetting-checklist.md](token-vetting-checklist.md) first —
 `LumenVault` assumes the token behaves like a conforming SEP-41
-implementation, and a fee-on-transfer or rebasing token will desync the
-vault's internal accounting from its real holdings.
+implementation. A fee-on-transfer token is rejected: `deposit` returns
+`InvalidAmount` unless the vault's token balance rises by exactly
+`amount`. A rebasing token can still move balances outside `transfer`,
+which that check does not see.
