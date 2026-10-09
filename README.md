@@ -211,3 +211,8 @@ signature that's since changed) is treated as a bug in this
 repository, not a cosmetic issue to get to later. If you find one,
 it's worth reporting the same way you'd report any other
 documentation defect.
+
+## Contributing & Community
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — Documentation standards, verification procedures, and pull request workflow.
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — Community pledge and standards.
