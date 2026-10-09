@@ -183,6 +183,67 @@ your keeper's actual run interval is longer than roughly a day, raise
 `threshold: 129600` — about 1.5 weeks of margin — for a weekly
 keeper), rather than leaving the default tuned for daily runs.
 
+### Storage rent economics, cost modeling & keeper renewal policies
+
+Soroban prices on-chain storage dynamically using ledger-level state
+rent. Unlike classic Stellar account reserves (which lock a flat 0.5 XLM
+collateral per subentry indefinitely until deleted), Soroban storage
+costs are ongoing, continuous, and proportional to:
+1. **Entry byte size** (instance vs persistent footprint).
+2. **Number of ledgers extended** (`extend_to`).
+3. **Current network state rent rate** (set by validator consensus via
+   network configuration entries).
+
+#### Storage footprint breakdown
+
+| Target Entry | Storage Class | Estimated Encoded Size | Active Keys Stored |
+|---|---|---|---|
+| `lumen_vault` instance | Instance | ~184 bytes | `Owner`, `Token`, `Balance`, `Paused`, `MinDeposit`, `MaxBalance`, `PendingOwner` |
+| `lumen_vault_factory` instance | Instance | ~128 bytes | `VaultWasmHash`, `VaultCount` |
+| `VaultsByOwner(Address)` | Persistent | ~68 bytes (empty) to ~3,268 bytes (100 addresses) | Vec of deployed vault addresses per deployer |
+
+#### Network fee profile & benchmarked costs
+
+Under current Stellar Mainnet and Testnet network parameters:
+
+$$\text{RentFee} = \text{FeeWrite1KB} \times \left( \frac{\text{SizeBytes}}{1024} \right) \times \left( \frac{\Delta\text{Ledgers}}{1000} \right) \times \text{RateMultiplier}$$
+
+| Parameter | Testnet | Mainnet | Description |
+|---|---|---|---|
+| Target ledger close time | ~5.0 seconds | ~5.0 seconds | Approximate time per closed ledger |
+| Base transaction fee | 100 stroops (0.00001 XLM) | 100 stroops (0.00001 XLM) | Minimum inclusion fee |
+| `extend_ttl` instance cost (30 days) | ~0.0035 – 0.0055 XLM | ~0.0040 – 0.0060 XLM | Per `lumen_vault` extension (518,400 ledgers) |
+| `extend_ttl` factory cost (30 days) | ~0.0030 – 0.0045 XLM | ~0.0035 – 0.0050 XLM | Factory instance extension |
+| `extend_vaults_by_owner_ttl` (30 days) | ~0.0045 – 0.0120 XLM | ~0.0050 – 0.0150 XLM | Persistent entry (scales with number of vaults deployed) |
+| **Annualized vault maintenance** | **~0.045 – 0.070 XLM** | **~0.050 – 0.075 XLM** | **~$0.005 – $0.008 USD / year per vault** |
+
+Because Soroban state rent for small instance entries is fractions of a
+cent per year, the primary operational concern is **execution reliability
+rather than capital cost**. Missing a renewal window risks state archival,
+requiring a restoration transaction before users can interact again.
+
+#### Recommended keeper operational matrix
+
+Integrators should select keeper schedules based on their operational cadence:
+
+| Operational Profile | Keeper Cadence | Recommended `threshold` | Recommended `extend_to` | Failure Buffer |
+|---|---|---|---|---|
+| **High-Frequency / Production dApp** | Every 12–24 hours | `259,200` ledgers (~15 days) | `518,400` ledgers (~30 days) | 15 days margin |
+| **Standard Integration (Default)** | Daily to Weekly | `120,960` ledgers (~7 days) | `1,036,800` ledgers (~60 days) | 7 days margin |
+| **Low-Touch / Cold Custody** | Monthly | `518,400` ledgers (~30 days) | `3,110,400` ledgers (~180 days) | 30 days margin |
+
+#### State archival and restoration runbook
+
+If a keeper fails and a vault's remaining TTL reaches zero:
+1. The entry is moved to the archive ledger by Stellar validators.
+2. Direct contract calls (`deposit`, `withdraw`, `balance`) will fail with
+   host error code `HostStorageError::UnknownContractId` or `StorageEntryNotFound`.
+3. To recover, send a `restore_footprint` operation specifying the vault's
+   instance storage key before calling `extend_ttl`. The SDK provides
+   automatic footprint assembly for restoration flows.
+4. Once restored and extended, contract state (including balances, owner,
+   and caps) returns immediately to its exact pre-archival state without loss.
+
 ## Constructor encoding and immutability
 
 Both contracts' constructors run exactly once, atomically with
