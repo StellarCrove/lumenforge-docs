@@ -57,6 +57,7 @@ directly — this repo links to it rather than duplicating it.
 | Looking up one specific function's exact signature | [`docs/api-reference.md`](docs/api-reference.md) |
 | Scripting with the `lumenforge` CLI, or setting up a scheduled keeper job | [`docs/cli-reference.md`](docs/cli-reference.md) |
 | Deciding whether a token is safe to point a vault at | [`docs/token-vetting-checklist.md`](docs/token-vetting-checklist.md) |
+| Evaluating Soroban vaults vs. classic Stellar account multi-sig | [`docs/design-tradeoffs.md`'s comparison matrix](docs/design-tradeoffs.md#lumenvault-vs-classic-stellar-multisig-custody) |
 | Wondering why something behaves a certain way instead of how you expected | [`docs/design-tradeoffs.md`](docs/design-tradeoffs.md) |
 | Debugging a TTL/storage-expiry issue, or wondering exactly what's stored where | [`docs/data-model.md`](docs/data-model.md) |
 | About to read the contract or SDK source directly | [`docs/architecture.md`'s repo map](docs/architecture.md#repo-map-where-to-look-for-what) |
