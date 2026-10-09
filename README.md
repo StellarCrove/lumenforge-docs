@@ -40,6 +40,9 @@ relate, how to integrate end to end, and the tradeoffs that span both.
 - [`docs/design-tradeoffs.md`](docs/design-tradeoffs.md) — the
   intentional limitations that show up across both repos, summarized in
   one place instead of scattered across ADRs.
+- [`docs/allowances.md`](docs/allowances.md) — optional per-address
+  deposit caps: how to stage them, the 32-member bound, and what they
+  do not grant.
 - [`docs/token-vetting-checklist.md`](docs/token-vetting-checklist.md) —
   what to check about a SEP-41 token before pointing a vault at it.
 
