@@ -112,3 +112,105 @@ soroban contract invoke --id "$VAULT_ID" --source deployer --network testnet -- 
 The number is the vault's accounted balance. For a normal SEP-41 token it equals the token contract's balance for `VAULT_ID`. A fee-on-transfer token is rejected by `deposit` (the contract returns `InvalidAmount` and the transfer reverts), so a failed first deposit usually means the token, not the deploy.
 
 Keep the vault alive with the daily keeper in [data-model.md](data-model.md#ttl-mechanics-worked-with-real-numbers): `threshold` 17280, `extend_to` 518400.
+
+---
+
+## Running a local Soroban standalone sandbox with Docker
+
+For local offline development, integration tests, or environments without stable internet access to the public testnet, you can run a self-contained local Stellar/Soroban network using Docker.
+
+### 1. Launch the standalone container
+
+Run the official Stellar Quickstart container in `standalone` mode:
+
+```bash
+docker run --rm -it \
+  -p 8000:8000 \
+  --name stellar-sandbox \
+  stellar/quickstart:testing \
+  --standalone \
+  --enable-soroban-rpc
+```
+
+This spins up:
+- **Soroban RPC**: `http://localhost:8000/soroban/rpc`
+- **Horizon API**: `http://localhost:8000`
+- **Network Passphrase**: `Standalone Network ; February 2017`
+- **Local Friendbot**: `http://localhost:8000/friendbot`
+
+### 2. Configure CLI network and local identity
+
+Add the local network profile to your `soroban-cli` (or `stellar-cli`):
+
+```bash
+# Add the local network endpoint
+stellar network add \
+  --rpc-url "http://localhost:8000/soroban/rpc" \
+  --network-passphrase "Standalone Network ; February 2017" \
+  local
+
+# Generate a local identity
+stellar keys generate local-alice --network local
+
+# Fund local-alice with local Friendbot
+curl "http://localhost:8000/friendbot?addr=$(stellar keys address local-alice)"
+```
+
+### 3. Deploy mock token, factory, and vault locally
+
+1. **Deploy a local SAC test token**:
+   ```bash
+   # Deploy an asset contract for local testing
+   TOKEN_ID=$(stellar contract asset deploy \
+     --asset "USDC:$(stellar keys address local-alice)" \
+     --source local-alice \
+     --network local)
+   echo "Mock Token Address: $TOKEN_ID"
+   ```
+
+2. **Install and deploy factory and vault**:
+   ```bash
+   # Build contract artifacts
+   cargo build --target wasm32v1-none --release
+
+   # Install vault wasm
+   VAULT_HASH=$(stellar contract install \
+     --wasm target/wasm32v1-none/release/lumen_vault.wasm \
+     --source local-alice \
+     --network local)
+
+   # Deploy factory
+   FACTORY_ID=$(stellar contract deploy \
+     --wasm target/wasm32v1-none/release/lumen_vault_factory.wasm \
+     --source local-alice \
+     --network local \
+     -- --vault_wasm_hash "$VAULT_HASH")
+
+   # Deploy vault through factory
+   VAULT_ID=$(stellar contract invoke \
+     --id "$FACTORY_ID" \
+     --source local-alice \
+     --network local \
+     -- deploy_vault \
+     --owner "$(stellar keys address local-alice)" \
+     --token "$TOKEN_ID" \
+     --salt "0000000000000000000000000000000000000000000000000000000000000001" \
+     --min_deposit 0 \
+     --max_balance 0)
+   ```
+
+3. **Connect via SDK locally**:
+   ```ts
+   import { connectVault } from "@lumenforge/sdk";
+
+   const vault = await connectVault({
+     contractId: VAULT_ID,
+     rpcUrl: "http://localhost:8000/soroban/rpc",
+     networkPassphrase: "Standalone Network ; February 2017",
+     secretKey: localAliceSecret,
+   });
+
+   const snapshot = await vault.getSnapshot();
+   console.log("Local vault initialized:", snapshot);
+   ```
+
