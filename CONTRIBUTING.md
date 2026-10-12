@@ -26,50 +26,24 @@ Thank you for helping improve the documentation for **LumenForge** — the produ
 - Prefer explicit tables and concrete examples with real numbers over high-level generalizations.
 
 ### 3. Link Integrity Verification
-Before opening a pull request, verify that no relative links are broken:
+
+Before opening a pull request, verify that no relative links or target anchors are broken across the repository.
+
+You can run the repository's dedicated validation script:
+
 ```bash
-node -e '
-const fs = require("fs");
-const path = require("path");
-
-function getFiles(dir) {
-  let files = [];
-  for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
-    const fullPath = path.join(dir, item.name);
-    if (item.isDirectory()) {
-      if (item.name !== ".git" && item.name !== "node_modules") {
-        files.push(...getFiles(fullPath));
-      }
-    } else if (item.name.endsWith(".md")) {
-      files.push(fullPath);
-    }
-  }
-  return files;
-}
-
-const mdFiles = getFiles(".");
-let hasErrors = false;
-const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
-
-for (const file of mdFiles) {
-  const content = fs.readFileSync(file, "utf8");
-  let match;
-  while ((match = linkRegex.exec(content)) !== null) {
-    const url = match[2].trim();
-    if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("mailto:") || url.startsWith("#")) continue;
-    const cleanPath = url.split("#")[0].split("?")[0];
-    if (!cleanPath) continue;
-    const resolved = path.resolve(path.dirname(file), cleanPath);
-    if (!fs.existsSync(resolved)) {
-      console.error(`❌ Broken link in ${file}: "${url}" -> Target not found: ${resolved}`);
-      hasErrors = true;
-    }
-  }
-}
-if (hasErrors) process.exit(1);
-console.log("✅ All links valid!");
-'
+node scripts/validate-links.cjs
 ```
+
+#### What the validator checks:
+- **Relative file paths**: Ensures all linked Markdown files (`.md`) and assets exist on disk relative to the referencing document.
+- **Anchor jumps**: Verifies that `#section-anchor` targets match slugified Markdown headings (`#`, `##`, `###`).
+- **Cross-document anchor targets**: Checks that links targeting anchors in other files (e.g. `docs/foo.md#bar`) actually correspond to headings in that file.
+
+#### Troubleshooting common validator failures:
+- `❌ Broken link ... Target not found`: Check if the relative directory path needs `../` or `docs/`.
+- `⚠️ Warning ... In-page anchor not found`: Headings containing special characters or question marks produce slugified anchors without punctuation (e.g. `## What is X?` becomes `#what-is-x`).
+- Keep external links using `http://`, `https://`, or `mailto:` which are skipped by the local filesystem check.
 
 ### 4. Pull Request Process
 1. Fork and create a branch named `docs/<feature-or-fix>`.
