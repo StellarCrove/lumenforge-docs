@@ -660,6 +660,7 @@ for a fee-on-transfer or rebasing token; see
 [token-vetting-checklist.md](token-vetting-checklist.md) for exactly
 this failure mode and how to check for it before it happens.
 
+<<<<<<< HEAD
 ## Production RPC Reliability & Failover
 
 In production, relying on a single public Soroban RPC node (such as the SDF public testnet/mainnet node) can lead to request throttling, HTTP 429 (`Too Many Requests`), or temporary outages during high network load.
@@ -773,6 +774,164 @@ export async function connectVaultWithFailover(
 }
 ```
 
+### `TypeError: Do not know how to serialize a BigInt` in JSON or frontends
+
+All token quantities, balances, and numerical caps across `lumenforge-sdk`
+use native JavaScript `bigint` (e.g. `10000000n`) to prevent JavaScript
+floating-point precision loss. However, ECMAScript does not specify a default
+serialization for `bigint` in `JSON.stringify()`. Calling `JSON.stringify()`
+on a `VaultSnapshot` or transaction result throws:
+
+```
+TypeError: Do not know how to serialize a BigInt
+```
+
+#### Safe JSON serialization helper
+
+To serialize SDK objects safely, provide a custom `replacer` function that converts
+`bigint` values to strings (preserving full precision):
+
+```ts
+export function stringifyWithBigInt(value: unknown, space?: number): string {
+  return JSON.stringify(
+    value,
+    (_key, val) => (typeof val === "bigint" ? val.toString() : val),
+    space
+  );
+}
+
+// When parsing back:
+export function parseWithBigInt(json: string, bigintKeys: string[] = ["balance", "minDeposit", "maxBalance"]): unknown {
+  return JSON.parse(json, (key, val) => {
+    if (bigintKeys.includes(key) && typeof val === "string" && /^\d+$/.test(val)) {
+      return BigInt(val);
+    }
+    return val;
+  });
+}
+```
+
+#### Converting between native types and Soroban `ScVal`
+
+When interacting directly with low-level contract invocations or raw XDR,
+use the Stellar SDK conversion utilities:
+
+```ts
+import { scValToNative, nativeToScVal, xdr } from "@stellar/stellar-sdk";
+
+// Convert JavaScript native types into Soroban ScVal
+const amountScVal = nativeToScVal(5000000n, { type: "i128" });
+const addressScVal = nativeToScVal("GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5", { type: "address" });
+
+// Convert raw ScVal returned by RPC simulation back to native JS types
+const rawScVal: xdr.ScVal = ...;
+const parsedValue = scValToNative(rawScVal);
+// e.g. parsedValue is bigint for i128/u64, string for Address/Symbol, boolean for Bool
+```
+
+---
+
+## Decoding Soroban RPC errors and host diagnostic events
+
+When simulating or submitting transactions via Soroban RPC, errors can arise
+at different layers of the execution pipeline: network submission status,
+simulation host errors, or contract-specific error codes.
+
+### 1. `SendTransactionResponse` statuses
+
+When submitting a transaction via `server.sendTransaction(tx)`, the RPC server
+returns a `SendTransactionResponse` with one of the following statuses:
+
+| Status | Meaning | Action to take |
+|---|---|---|
+| `PENDING` | Transaction accepted into mempool; waiting for ledger inclusion. | Poll `server.getTransaction(hash)` until status is `SUCCESS` or `FAILED`. |
+| `DUPLICATE` | A transaction with this hash is already in the ledger or mempool. | Safe to treat as submitted; query `getTransaction(hash)`. |
+| `TRY_AGAIN_LATER` | RPC node or network mempool is temporarily congested. | Wait with jitter and retry submission without changing sequence number. |
+| `ERROR` | Malformed transaction envelope, bad signature, or invalid sequence number. | Inspect `errorResultXdr` to identify sequence or signature failure. |
+
+### 2. Extracting host diagnostic events from simulation results
+
+During transaction simulation (`server.simulateTransaction(tx)` or during
+`signAndSend`), failures output diagnostic events containing call-stack
+traces, budget limits, and contract authorization logs.
+
+```ts
+import { rpc, xdr } from "@stellar/stellar-sdk";
+
+export function extractDiagnosticInfo(simResponse: rpc.Api.SimulateTransactionResponse): string[] {
+  const diagnostics: string[] = [];
+  
+  if (rpc.Api.isSimulationError(simResponse)) {
+    diagnostics.push(`Simulation Error: ${simResponse.error}`);
+  }
+
+  // Inspect diagnostic events emitted by the Soroban host
+  if (simResponse.events) {
+    for (const event of simResponse.events) {
+      // Diagnostic events have type 'diagnostic' or topic 'fn_call'
+      const topics = event.event().body().v0().topics().map(t => xdr.ScVal.fromXDR(t.toXDR()).toString());
+      const data = event.event().body().v0().data().toString();
+      diagnostics.push(`Event: topics=[${topics.join(", ")}] data=${data}`);
+    }
+  }
+
+  return diagnostics;
+}
+```
+
+### 3. Parsing `Error(Contract, #N)` into typed LumenVault errors
+
+When a contract call reverts, Soroban RPC formats the error message as
+`Error(Contract, #N)` where `#N` is the contract-defined error integer code.
+
+In `lumenforge-sdk`, these map directly to `VAULT_ERROR_TYPES`:
+
+```ts
+import { VAULT_ERROR_TYPES, VaultErrorCode } from "@lumenforge/sdk";
+
+export function parseContractError(errorMessage: string): { code: number; name: string } | null {
+  const match = errorMessage.match(/Error\(Contract,\s*#?(\d+)\)/);
+  if (!match) return null;
+
+  const code = parseInt(match[1], 10);
+  const name = VAULT_ERROR_TYPES[code as VaultErrorCode] ?? `UnknownContractError(${code})`;
+  return { code, name };
+}
+
+// Example usage:
+try {
+  await client.deposit({ from: "G...", amount: 10n });
+} catch (err: any) {
+  const parsed = parseContractError(err.message);
+  if (parsed) {
+    console.error(`Contract failed with ${parsed.name} (Code ${parsed.code})`);
+    // Output: Contract failed with DepositBelowMinimum (Code 7)
+  } else {
+    console.error(`General transaction error:`, err);
+  }
+}
+```
+
+#### LumenVault error code quick reference
+
+| Code | Error Name | Common Trigger |
+|---|---|---|
+| `1` | `AlreadyInitialized` | Attempting to initialize an already-configured vault. |
+| `2` | `InvalidAmount` | Zero deposit/withdrawal or transfer delta mismatch (fee-on-transfer). |
+| `3` | `InsufficientBalance` | Withdrawal amount exceeds the vault's recorded balance. |
+| `4` | `Unauthorized` | Caller did not provide required owner or depositor signature. |
+| `5` | `ZeroAddress` | Setting owner or token to null/zero address. |
+| `6` | `VaultIsPaused` | Attempting to deposit into a paused vault. |
+| `7` | `DepositBelowMinimum` | Deposit amount is less than the configured `min_deposit`. |
+| `8` | `MaxBalanceExceeded` | Deposit would push total balance over `max_balance`. |
+| `9` | `CannotRescueVaultToken` | Owner attempted to call `rescue_token` on the vault's primary custodied token. |
+| `10` | `NoPendingOwner` | Calling `accept_ownership` when no transfer has been proposed. |
+| `11` | `BatchTooLarge` | `batch_deposit` payload exceeds 20 items. |
+| `12` | `AllowanceExceeded` | Depositor exceeded assigned allowance or allowances enabled for unlisted member. |
+| `13` | `AllowanceListFull` | Allowance membership list exceeded the 32-address limit. |
+
+---
+
 ## Before you point a vault at a token
 
 Read [token-vetting-checklist.md](token-vetting-checklist.md) first —
@@ -781,3 +940,4 @@ implementation. A fee-on-transfer token is rejected: `deposit` returns
 `InvalidAmount` unless the vault's token balance rises by exactly
 `amount`. A rebasing token can still move balances outside `transfer`,
 which that check does not see.
+
