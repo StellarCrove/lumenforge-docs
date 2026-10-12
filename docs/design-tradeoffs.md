@@ -440,6 +440,137 @@ above for compromised-key recovery — the contract stays deliberately
 ignorant of what's "behind" its owner address, and that's the
 intended extension point for exactly this kind of requirement.
 
+## Migration guide: classic Stellar multi-sig accounts to Soroban vaults
+
+Many production Stellar systems traditionally custody funds in classic
+Stellar accounts (`G...`) governed by multi-signature schemes (multiple
+signers with weighted thresholds). Moving from classic multi-sig custody to
+programmable Soroban vaults (`lumen_vault`) unlocks programmable controls
+such as automated deposit caps, emergency pause controls, depositor
+allowance lists (ADR 006), and keeper-driven automation.
+
+This guide provides a step-by-step roadmap for migrating custody while
+maintaining institutional security guarantees.
+
+### Cost comparison: locked base reserves vs. Soroban storage rent
+
+| Dimension | Classic Stellar Multi-Sig Account | Programmable Soroban Vault (`lumen_vault`) |
+|---|---|---|
+| **Base Reserve** | 1.0 XLM account baseline + 0.5 XLM per additional signer + 0.5 XLM per trustline. Locked permanently until removed. | Minimal transaction fee for instantiation; no classic ledger reserve locked inside the contract itself. |
+| **Storage Model** | Indefinite persistence as long as base reserve is locked in the account. | Time-To-Live ([TTL](glossary.md#ttl)) model with per-ledger rent. Requires periodic renewal. |
+| **Capital Lockup** | For a 3-of-5 multisig holding 10 classic assets: $1.0 + (5 \times 0.5) + (10 \times 0.5) = 8.5\text{ XLM}$ capital locked. | Zero idle XLM locked in trustlines. Operational rent is paid as gas during interactions or via keeper scripts (~$0.01--0.05$ XLM annually). |
+| **Access Control** | Static Ed25519 weight thresholds on the classic account. | Hybrid: The classic multi-sig account can act as the vault's single `owner`. |
+| **Programmability** | None (protocol-level payments only). | Rich: Deposit allowances, minimum dust guards, maximum balance caps, emergency pause, batch deposits. |
+
+### Governance: retaining classic multi-sig signers over Soroban vaults
+
+A common misconception is that migrating to a Soroban vault requires
+replacing your multi-signature signers with a single private key.
+
+On Soroban, the `owner` field is an `Address` type. An `Address` can be a
+classic Stellar multi-sig account (`G...`). When an owner-gated method
+(`withdraw`, `pause`, `set_min_deposit`, `set_allowance`) invokes
+`self.owner.require_auth()`, the Soroban runtime defers to the classic
+account's multi-sig configuration:
+
+```
+[Signer 1 (weight 1)] ──┐
+[Signer 2 (weight 1)] ──┼──> [Classic Account G... (threshold 2)] ──> [Vault Owner require_auth()] ──> lumen_vault
+[Signer 3 (weight 1)] ──┘
+```
+
+The vault transaction envelope simply gathers the required classic
+signatures according to the account's existing threshold rules before
+submitting to the network. Existing hardware wallets, custodian signers,
+and threshold policies remain completely intact.
+
+### Step-by-step migration procedure
+
+#### Step 1: Pre-migration audit & preparation
+1. **Audit existing balances**: Query Horizon or RPC for all asset balances
+   held by the source multi-sig account.
+2. **Obtain Stellar Asset Contract (SAC) IDs**: For each classic asset
+   (e.g., `USDC:G...` or native `XLM`), resolve its corresponding SAC
+   contract address (`C...`) using the SDK:
+   ```ts
+   import { Asset, Networks } from "@stellar/stellar-sdk";
+   const usdcAsset = new Asset("USDC", "GISSUER...");
+   const usdcContractAddress = usdcAsset.contractId(Networks.PUBLIC);
+   ```
+3. **Verify asset vetting**: Review the token against the
+   [Token Vetting Checklist](token-vetting-checklist.md) (ensure clawback
+   and auth revocable flags are understood).
+
+#### Step 2: Deploy the Soroban vault
+Deploy a dedicated `lumen_vault` instance via the factory, specifying the
+existing classic multi-sig account (`G...`) as the initial `owner`:
+
+```bash
+lumenforge factory deploy \
+  --factory $FACTORY_CONTRACT \
+  --owner $MULTISIG_ACCOUNT \
+  --token $SAC_CONTRACT_ADDRESS \
+  --min-deposit 1000000 \
+  --max-balance 1000000000000
+```
+
+Verify that the vault state is initialized with your multi-sig account as
+the `owner` using `lumenforge vault inspect --contract $NEW_VAULT_ADDRESS`.
+
+#### Step 3: Authorize SAC allowance and deposit funds
+From the classic multi-sig account:
+1. Coordinate signers to sign an atomic payment or transfer invoking the
+   SAC contract's `transfer` method:
+   - **Sender**: Classic multi-sig account (`G...`)
+   - **Destination**: Vault contract address (`C...`)
+   - **Amount**: Full migrated balance.
+2. Once the SAC transfer closes, confirm the vault's internal custodied
+   balance has updated:
+   ```bash
+   lumenforge vault balance --contract $NEW_VAULT_ADDRESS
+   ```
+
+#### Step 4: Validate deposit and withdrawal cycles
+Before deprecating the classic storage pipeline, execute a test withdrawal:
+1. Generate an `AssembledTransaction` for `withdraw` to a designated
+   destination address.
+2. Distribute the transaction XDR to the multi-sig signers to collect threshold
+   signatures.
+3. Submit the transaction and confirm the funds were released.
+4. Redeposit the test funds into the vault.
+
+#### Step 5: Teardown classic trustlines (reclaiming locked reserves)
+After verifying the vault holds the custodian balance:
+1. Verify the classic account's asset balance is exactly zero.
+2. Submit a `ChangeTrust` operation with `limit: 0` to close the asset trustline.
+3. Each closed trustline immediately frees `0.5 XLM` of locked base reserve back
+   to the multi-sig account's transferable balance.
+
+#### Step 6: Configure automated Keeper jobs
+Set up a scheduled keeper daemon (e.g., GitHub Actions or cron job) using
+`lumenforge vault extend-ttl` or `lumenforge-sdk` to ensure instance storage
+TTL is extended regularly without requiring multisig threshold intervention.
+
+---
+
+### Migration security checklist
+
+#### Pre-migration checklist
+- [ ] Source multi-sig threshold requirements and signer key status verified.
+- [ ] Asset SAC addresses deterministically calculated and verified against official asset issuers.
+- [ ] Target vault deployed with dust limits (`min_deposit`) and balance caps (`max_balance`) appropriately configured.
+- [ ] Token behavior vetted against [Token Vetting Checklist](token-vetting-checklist.md) (especially fee-on-transfer and clawback mechanics).
+- [ ] Keeper service funded and configured to monitor vault TTL before live deposits.
+
+#### Post-migration checklist
+- [ ] On-chain vault balance matches total migrated balance from classic account.
+- [ ] Test withdrawal transaction successfully signed by multi-sig signers and executed.
+- [ ] Deprecated classic trustlines closed (`limit: 0`) and base reserves reclaimed.
+- [ ] Factory index verified via `lumenforge factory list --owner $MULTISIG_ACCOUNT`.
+- [ ] Monitoring alerts configured for vault TTL thresholds (< 100,000 ledgers).
+
+---
+
 ## How to tell "deliberate tradeoff" from "actual bug"
 
 Every entry on this page has a specific, articulable *reason* tied to
