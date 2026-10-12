@@ -142,6 +142,58 @@ happening (protection against a contract that always returns full
 pages). Throws synchronously if `pageSize`/`maxPages` isn't a positive
 integer.
 
+#### Raw On-Chain While-Loop Pattern
+
+If interacting with `factory.vaults_by_owner` directly without the SDK generator wrappers, page through the vector using the `offset` and `limit` parameters:
+
+```ts
+import { connectFactory, type FactoryClient } from "@lumenforge/sdk";
+
+export async function fetchAllVaultsDirectly(
+  factory: FactoryClient,
+  owner: string,
+  pageSize = 50,
+): Promise<string[]> {
+  const allVaults: string[] = [];
+  let offset = 0;
+
+  // 1. Read total count if available
+  const totalCount = (await factory.vaults_by_owner_count({ owner })).result;
+  if (totalCount === 0) return [];
+
+  // 2. Page through using offset and limit
+  while (offset < totalCount) {
+    const limit = Math.min(pageSize, totalCount - offset);
+    const { result: page } = await factory.vaults_by_owner({
+      owner,
+      offset,
+      limit,
+    });
+
+    if (!page || page.length === 0) {
+      break; // Safeguard against unexpected contract behavior
+    }
+
+    allVaults.push(...page);
+    offset += page.length;
+  }
+
+  return allVaults;
+}
+```
+
+#### Pagination Edge Cases & Best Practices
+
+1. **Empty Vector / Zero Vaults**:
+   - Calling `vaults_by_owner_count({ owner })` for an owner with no vaults returns `0`.
+   - Calling `vaults_by_owner({ owner, offset: 0, limit: 10 })` for an unknown owner returns an empty vector `[]` (it does not throw `NoVaultsForOwner`).
+2. **Index / Offset Out of Bounds**:
+   - If `offset >= totalCount`, the contract returns an empty vector `[]`.
+   - Clamping `limit` to `totalCount - offset` prevents allocating unnecessary empty slots on the host.
+3. **Performance for Fleets of 100+ Vaults**:
+   - Prefer a `pageSize` of `50` (or up to `100`). Requesting pages smaller than 10 creates excessive RPC round-trip latency.
+   - For reading full vault states, use `collectVaultSnapshotsByOwner` or `iterateVaultSnapshotsByOwner`. They fetch snapshots with sequential rate pacing to avoid triggering RPC 429 rate limits.
+
 ### `iterateVaultSnapshotsByOwner` / `collectVaultSnapshotsByOwner`
 
 ```ts

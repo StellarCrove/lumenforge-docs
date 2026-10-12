@@ -22,6 +22,7 @@ order you'd actually do things in.
 - [Migrating existing code to the newer helpers](#migrating-existing-code-to-the-newer-helpers)
 - [Framework-specific notes](#framework-specific-notes)
 - [Troubleshooting](#troubleshooting)
+- [Production RPC Reliability & Failover](#production-rpc-reliability--failover)
 - [Before you point a vault at a token](#before-you-point-a-vault-at-a-token)
 - [Deploy on testnet](testnet-deploy.md)
 
@@ -658,6 +659,119 @@ supposed to always agree for a conforming token, but can drift apart
 for a fee-on-transfer or rebasing token; see
 [token-vetting-checklist.md](token-vetting-checklist.md) for exactly
 this failure mode and how to check for it before it happens.
+
+## Production RPC Reliability & Failover
+
+In production, relying on a single public Soroban RPC node (such as the SDF public testnet/mainnet node) can lead to request throttling, HTTP 429 (`Too Many Requests`), or temporary outages during high network load.
+
+### Public vs Commercial Soroban RPC Providers
+
+| Provider | Tier | Intended Use | Rate Limits | Notes |
+|---|---|---|---|---|
+| **SDF Public RPC** | Public (Free) | Development & Testing | ~10–20 req/sec | Best-effort; subject to throttling without notice. Do not use for high-volume backends. |
+| **QuickNode** | Commercial / Dedicated | Production dApps & Indexers | Configurable (100–1000+ RPS) | Multi-region endpoints, enterprise SLA, custom archive support. |
+| **Blockdaemon** | Commercial / Dedicated | Institutional Custody | Configurable | High-availability dedicated nodes and direct gRPC/RPC access. |
+| **NowNodes / Ankr** | Commercial | Multi-chain Apps | Tiered quotas | Good secondary failover endpoint. |
+
+### Exponential Backoff & Retry Pattern
+
+When using `@stellar/stellar-sdk` and `@lumenforge/sdk`, wrap RPC network interactions with an exponential backoff retry handler that handles HTTP 429 and transient 5xx errors:
+
+```ts
+export interface RetryOptions {
+  maxRetries?: number;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+  backoffFactor?: number;
+}
+
+export async function withRpcRetry<T>(
+  fn: () => Promise<T>,
+  options: RetryOptions = {},
+): Promise<T> {
+  const {
+    maxRetries = 4,
+    initialDelayMs = 500,
+    maxDelayMs = 8000,
+    backoffFactor = 2,
+  } = options;
+
+  let delay = initialDelayMs;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const isRateLimited =
+        err?.status === 429 ||
+        err?.response?.status === 429 ||
+        String(err?.message).includes("429");
+      const isTransient =
+        isRateLimited ||
+        err?.status >= 500 ||
+        err?.code === "ECONNRESET" ||
+        err?.code === "ETIMEDOUT";
+
+      if (!isTransient || attempt === maxRetries) {
+        throw err;
+      }
+
+      // Add jitter to avoid thundering herd
+      const jitter = Math.random() * 200;
+      await new Promise((resolve) => setTimeout(resolve, delay + jitter));
+      delay = Math.min(delay * backoffFactor, maxDelayMs);
+    }
+  }
+  throw new Error("Retry loop exhausted");
+}
+```
+
+### Multi-RPC Endpoint Failover Client
+
+To achieve high availability, configure an ordered pool of RPC endpoints. If the primary endpoint fails with repeated errors or 429s, seamlessly roll over to the secondary provider:
+
+```ts
+import { connectVault, type VaultClient } from "@lumenforge/sdk";
+
+export interface FailoverConfig {
+  contractId: string;
+  rpcUrls: readonly string[];
+  networkPassphrase: string;
+  publicKey: string;
+}
+
+export async function connectVaultWithFailover(
+  config: FailoverConfig,
+): Promise<{ vault: VaultClient; activeRpcUrl: string }> {
+  const errors: Error[] = [];
+
+  for (const rpcUrl of config.rpcUrls) {
+    try {
+      const vault = await withRpcRetry(
+        () =>
+          connectVault({
+            contractId: config.contractId,
+            rpcUrl,
+            networkPassphrase: config.networkPassphrase,
+            publicKey: config.publicKey,
+            allowHttp: rpcUrl.startsWith("http://"),
+          }),
+        { maxRetries: 2, initialDelayMs: 300 },
+      );
+
+      // Verify connection with a lightweight read
+      await withRpcRetry(() => vault.paused(), { maxRetries: 1 });
+      return { vault, activeRpcUrl: rpcUrl };
+    } catch (err) {
+      errors.push(err instanceof Error ? err : new Error(String(err)));
+      // Continue to next endpoint in pool
+    }
+  }
+
+  throw new Error(
+    `All RPC endpoints failed: ${errors.map((e) => e.message).join("; ")}`,
+  );
+}
+```
 
 ## Before you point a vault at a token
 
