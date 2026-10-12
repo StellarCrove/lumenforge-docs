@@ -45,6 +45,8 @@ relate, how to integrate end to end, and the tradeoffs that span both.
   do not grant.
 - [`docs/token-vetting-checklist.md`](docs/token-vetting-checklist.md) —
   what to check about a SEP-41 token before pointing a vault at it.
+- [`docs/glossary.md`](docs/glossary.md) — comprehensive glossary of
+  Stellar, Soroban, and custody terminology (40+ indexed definitions).
 
 For contract-level detail (threat model, per-function auth rules,
 resolved/open security issues), see `lumenforge-contracts`'
@@ -92,7 +94,9 @@ specific capabilities deliberately left out and why.
 Terms used consistently across every document in this repository,
 gathered in one place for anyone encountering them for the first
 time or needing a precise definition rather than inferring one from
-context.
+context. For an exhaustive, alphabetically indexed reference covering
+40+ Stellar, Soroban, and custody concepts, see the standalone
+[**Comprehensive Glossary**](docs/glossary.md).
 
 | Term | Meaning |
 |---|---|
