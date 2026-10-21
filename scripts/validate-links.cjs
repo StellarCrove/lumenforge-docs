@@ -23,19 +23,23 @@ function getMarkdownFiles(dir) {
   return files;
 }
 
+function stripCodeBlocks(content) {
+  return content.replace(/```[\s\S]*?```/g, "");
+}
+
 function extractHeaders(content) {
+  const clean = stripCodeBlocks(content);
   const headerRegex = /^#{1,6}\s+(.+)$/gm;
   const headers = new Set();
   let match;
-  while ((match = headerRegex.exec(content)) !== null) {
+  while ((match = headerRegex.exec(clean)) !== null) {
     const rawTitle = match[1].trim();
-    // GitHub markdown anchor slug generation:
-    // lowercase, remove special characters except hyphens and spaces, replace spaces with hyphens
-    const slug = rawTitle
+    const stripped = rawTitle
       .toLowerCase()
-      .replace(/[`~!@#$%^&*()+=|{}[\]:;"'<>,.?\\/]/g, "")
-      .replace(/\s+/g, "-");
-    headers.add(slug);
+      .replace(/[`~!@#$%^&*()+=|{}[\]:;"'<>,.?\\/]/g, "");
+    // GitHub markdown anchor slug generation:
+    headers.add(stripped.replace(/ /g, "-"));
+    headers.add(stripped.replace(/\s+/g, "-"));
   }
   return headers;
 }
@@ -47,7 +51,9 @@ console.log(`Scanning ${mdFiles.length} markdown files for relative links...`);
 const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
 
 for (const file of mdFiles) {
-  const content = fs.readFileSync(file, "utf8");
+  const rawContent = fs.readFileSync(file, "utf8");
+  const content = stripCodeBlocks(rawContent);
+  const headers = extractHeaders(rawContent);
   let match;
   while ((match = linkRegex.exec(content)) !== null) {
     const rawUrl = match[2].trim();
@@ -62,10 +68,9 @@ for (const file of mdFiles) {
     if (rawUrl.startsWith("#")) {
       // In-page anchor validation
       const anchor = rawUrl.slice(1);
-      const headers = extractHeaders(content);
       if (!headers.has(anchor)) {
-        // Warning for anchor mismatch
-        console.warn(`⚠️ Warning in ${file}: In-page anchor "#${anchor}" not found in headers.`);
+        console.error(`❌ Broken anchor in ${file}: In-page anchor "#${anchor}" not found in headers.`);
+        hasErrors = true;
       }
       continue;
     }
@@ -84,7 +89,8 @@ for (const file of mdFiles) {
       const targetContent = fs.readFileSync(resolved, "utf8");
       const targetHeaders = extractHeaders(targetContent);
       if (!targetHeaders.has(anchorPart)) {
-        console.warn(`⚠️ Warning in ${file}: Cross-file anchor "#${anchorPart}" not found in ${cleanPath}.`);
+        console.error(`❌ Broken anchor in ${file}: Cross-file anchor "#${anchorPart}" not found in ${cleanPath}.`);
+        hasErrors = true;
       }
     }
   }
@@ -94,5 +100,5 @@ if (hasErrors) {
   console.error("\n❌ Documentation link validation failed!");
   process.exit(1);
 } else {
-  console.log("\n✅ All relative documentation links verified successfully.");
+  console.log("\n✅ All relative documentation links and anchors verified successfully.");
 }

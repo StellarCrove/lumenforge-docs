@@ -33,7 +33,7 @@ repository under `docs/adr/`.
 
 ### Archival & Restoration
 Soroban's mechanism for managing ledger state size. When a storage entry's
-Time-To-Live ([TTL](#ttl)) drops to zero, the network moves it to archive
+Time-To-Live ([TTL](#time-to-live-ttl)) drops to zero, the network moves it to archive
 storage. Archived entries cannot be read or modified by contract calls until
 reactivated via a `restore_footprint` operation with valid ledger proofs.
 LumenForge uses proactive [Keeper](#keeper) jobs to prevent archival of
@@ -186,7 +186,7 @@ instance entry's TTL expires, the entire contract instance is archived.
 An off-chain background agent, cron process, or automated daemon responsible
 for periodically calling maintenance functions such as `extend_ttl` or
 `extend_all_ttl`. Keepers prevent vault storage from expiring into archival.
-See [CLI Reference](cli-reference.md#keeper-and-automation-recipes).
+See [CLI Reference](cli-reference.md#automation-recipes).
 
 ### KeypairSigner
 A signer utility in `lumenforge-sdk` that wraps a raw secret seed (`S...`)

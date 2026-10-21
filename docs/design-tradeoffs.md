@@ -482,7 +482,7 @@ architectures and an integrator decision guide.
 
 #### 2. Key recovery & trust root
 - **Classic multisig**: The trust root is distributed across multiple keys according to configured weights and thresholds (`low`, `med`, `high`). If 1 key in a 2-of-3 setup is compromised or lost, the remaining 2 keys can execute a `SetOptions` transaction to revoke the compromised key and add a replacement signer, with zero fund movement or downtime.
-- **`lumen_vault`**: By design ([ADR-002](https://github.com/StellarCrove/lumenforge-contracts/blob/main/docs/adr/002-two-step-ownership.md)), the vault enforces a strict single-address `owner` trust root with two-step ownership transfer (`transfer_ownership` followed by `accept_ownership`). If the owner key is permanently lost, there is no backdoor or admin override to recover the vault or rotate ownership.
+- **`lumen_vault`**: By design ([ADR-003](https://github.com/StellarCrove/lumenforge-contracts/blob/main/docs/adr/003-two-step-ownership-transfer.md)), the vault enforces a strict single-address `owner` trust root with two-step ownership transfer (`propose_owner` followed by `accept_owner`). If the owner key is permanently lost, there is no backdoor or admin override to recover the vault or rotate ownership.
 
 #### 3. Automation, keepers, & observability
 - **Classic multisig**: An account cannot autonomously enforce conditional rules. For example, you cannot prevent an external counterparty from sending 0.0000001 USDC dust, nor can you implement a circuit breaker that halts incoming deposits during an incident while leaving withdrawals active.
@@ -517,9 +517,9 @@ You do not have to choose strictly between the two. The recommended production p
 
 #### How it works in practice
 1. **Deployment**: When deploying the vault (via `deploy_vault_via_factory` or direct deployment), pass the classic multisig account address (`GA...`) as the initial `owner`.
-2. **Owner authentication**: When calling any owner-gated method (`withdraw`, `pause`, `set_min_deposit`, `transfer_ownership`), Soroban evaluates `owner.require_auth()`. Because `owner` is a classic account, Stellar Core verifies that the transaction envelope contains valid signatures satisfying the account's configured threshold (e.g. 2 of 3 valid Ed25519 signatures).
+2. **Owner authentication**: When calling any owner-gated method (`withdraw`, `pause`, `set_min_deposit`, `propose_owner`), Soroban evaluates `owner.require_auth()`. Because `owner` is a classic account, Stellar Core verifies that the transaction envelope contains valid signatures satisfying the account's configured threshold (e.g. 2 of 3 valid Ed25519 signatures).
 3. **Recovery without fund movement**: If one of the multisig signers is compromised, the remaining signers execute a classic `SetOptionsOp` on the multisig account itself. The vault's state remains untouched, its address does not change, and its funds never need to be withdrawn or re-deposited.
-4. **Separation of duties**: Daily operational upkeep (running `lumenforge keep-alive` or `lumenforge extend-vault-ttl`) requires no owner authorization and can be delegated to an automated server key with zero risk to the custodied principal.
+4. **Separation of duties**: Daily operational upkeep (running `lumenforge keep-alive` or `lumenforge extend-ttl`) requires no owner authorization and can be delegated to an automated server key with zero risk to the custodied principal.
 
 ### Integrator decision guide
 
@@ -551,7 +551,7 @@ maintaining institutional security guarantees.
 | Dimension | Classic Stellar Multi-Sig Account | Programmable Soroban Vault (`lumen_vault`) |
 |---|---|---|
 | **Base Reserve** | 1.0 XLM account baseline + 0.5 XLM per additional signer + 0.5 XLM per trustline. Locked permanently until removed. | Minimal transaction fee for instantiation; no classic ledger reserve locked inside the contract itself. |
-| **Storage Model** | Indefinite persistence as long as base reserve is locked in the account. | Time-To-Live ([TTL](glossary.md#ttl)) model with per-ledger rent. Requires periodic renewal. |
+| **Storage Model** | Indefinite persistence as long as base reserve is locked in the account. | Time-To-Live ([TTL](glossary.md#time-to-live-ttl)) model with per-ledger rent. Requires periodic renewal. |
 | **Capital Lockup** | For a 3-of-5 multisig holding 10 classic assets: $1.0 + (5 \times 0.5) + (10 \times 0.5) = 8.5\text{ XLM}$ capital locked. | Zero idle XLM locked in trustlines. Operational rent is paid as gas during interactions or via keeper scripts (~$0.01--0.05$ XLM annually). |
 | **Access Control** | Static Ed25519 weight thresholds on the classic account. | Hybrid: The classic multi-sig account can act as the vault's single `owner`. |
 | **Programmability** | None (protocol-level payments only). | Rich: Deposit allowances, minimum dust guards, maximum balance caps, emergency pause, batch deposits. |
@@ -600,7 +600,7 @@ Deploy a dedicated `lumen_vault` instance via the factory, specifying the
 existing classic multi-sig account (`G...`) as the initial `owner`:
 
 ```bash
-lumenforge factory deploy \
+lumenforge deploy-via-factory \
   --factory $FACTORY_CONTRACT \
   --owner $MULTISIG_ACCOUNT \
   --token $SAC_CONTRACT_ADDRESS \
@@ -609,19 +609,19 @@ lumenforge factory deploy \
 ```
 
 Verify that the vault state is initialized with your multi-sig account as
-the `owner` using `lumenforge vault inspect --contract $NEW_VAULT_ADDRESS`.
+the `owner` using `lumenforge snapshot --contract $NEW_VAULT_ADDRESS`.
 
 #### Step 3: Authorize SAC allowance and deposit funds
 From the classic multi-sig account:
 1. Coordinate signers to sign an atomic payment or transfer invoking the
-   SAC contract's `transfer` method:
+   SAC contract's `deposit` method on the vault (or via `lumenforge deposit`):
    - **Sender**: Classic multi-sig account (`G...`)
-   - **Destination**: Vault contract address (`C...`)
+   - **Vault**: Vault contract address (`C...`)
    - **Amount**: Full migrated balance.
-2. Once the SAC transfer closes, confirm the vault's internal custodied
+2. Once the deposit transaction closes, confirm the vault's internal custodied
    balance has updated:
    ```bash
-   lumenforge vault balance --contract $NEW_VAULT_ADDRESS
+   lumenforge balance --contract $NEW_VAULT_ADDRESS
    ```
 
 #### Step 4: Validate deposit and withdrawal cycles
@@ -642,7 +642,7 @@ After verifying the vault holds the custodian balance:
 
 #### Step 6: Configure automated Keeper jobs
 Set up a scheduled keeper daemon (e.g., GitHub Actions or cron job) using
-`lumenforge vault extend-ttl` or `lumenforge-sdk` to ensure instance storage
+`lumenforge keep-alive` or `lumenforge-sdk` to ensure instance storage
 TTL is extended regularly without requiring multisig threshold intervention.
 
 ---
@@ -660,7 +660,7 @@ TTL is extended regularly without requiring multisig threshold intervention.
 - [ ] On-chain vault balance matches total migrated balance from classic account.
 - [ ] Test withdrawal transaction successfully signed by multi-sig signers and executed.
 - [ ] Deprecated classic trustlines closed (`limit: 0`) and base reserves reclaimed.
-- [ ] Factory index verified via `lumenforge factory list --owner $MULTISIG_ACCOUNT`.
+- [ ] Factory index verified via `lumenforge list-vaults --factory $FACTORY_CONTRACT --owner $MULTISIG_ACCOUNT`.
 - [ ] Monitoring alerts configured for vault TTL thresholds (< 100,000 ledgers).
 
 ---
