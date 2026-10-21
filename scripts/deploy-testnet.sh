@@ -13,6 +13,7 @@ fi
 : "${SOROBAN_RPC_URL:=https://soroban-testnet.stellar.org}"
 : "${SOROBAN_NETWORK_PASSPHRASE:=Test SDF Network ; September 2015}"
 : "${MIN_DEPOSIT:=0}"
+: "${MAX_BALANCE:=null}"
 : "${CONTRACTS_DIR:=../lumenforge-contracts}"
 
 if ! command -v soroban >/dev/null 2>&1; then
@@ -97,6 +98,7 @@ if [[ -z "${VAULT_ID:-}" ]]; then
     --owner "$DEPLOYER_PUBLIC" \
     --token "$TOKEN_CONTRACT_ID" \
     --min_deposit "$MIN_DEPOSIT" \
+    --max_balance "$MAX_BALANCE" \
     --salt "$SALT")"
 fi
 echo "VAULT_ID=$VAULT_ID"
